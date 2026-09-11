@@ -436,48 +436,9 @@
     }
   </style>
   <!-- Firebase SDK -->
-  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js">
-  // ── Player Avatars ─────────────────────────────────────────────────────
-  const PLAYER_AVATARS = {
-    'Da Commish': '👑', 'Q': '🥃', 'O': '🐧', 'Milo': '🐸',
-    'Owls': '🦉', 'Honey': '🍯', 'Pops': '🤘', 'ML': '🐻',
-    'Cobe': '⚾', 'Coin': '🪙', 'Abby': '⛸️', 'Jason': '🇪🇺'
-  };
-
-  function getAvatar(name, size = 32) {
-    const emoji = PLAYER_AVATARS[name] || '🏈';
-    return `<span style="display:inline-flex;align-items:center;justify-content:center;width:${size}px;height:${size}px;font-size:${size*0.65}px;background:rgba(245,197,24,0.1);border-radius:50%;border:2px solid rgba(245,197,24,0.3);margin-right:8px;">${emoji}</span>`;
-  }
-
-</script>
-  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js">
-  // ── Player Avatars ─────────────────────────────────────────────────────
-  const PLAYER_AVATARS = {
-    'Da Commish': '👑', 'Q': '🥃', 'O': '🐧', 'Milo': '🐸',
-    'Owls': '🦉', 'Honey': '🍯', 'Pops': '🤘', 'ML': '🐻',
-    'Cobe': '⚾', 'Coin': '🪙', 'Abby': '⛸️', 'Jason': '🇪🇺'
-  };
-
-  function getAvatar(name, size = 32) {
-    const emoji = PLAYER_AVATARS[name] || '🏈';
-    return `<span style="display:inline-flex;align-items:center;justify-content:center;width:${size}px;height:${size}px;font-size:${size*0.65}px;background:rgba(245,197,24,0.1);border-radius:50%;border:2px solid rgba(245,197,24,0.3);margin-right:8px;">${emoji}</span>`;
-  }
-
-</script>
-  <script src="firebase-config.js">
-  // ── Player Avatars ─────────────────────────────────────────────────────
-  const PLAYER_AVATARS = {
-    'Da Commish': '👑', 'Q': '🥃', 'O': '🐧', 'Milo': '🐸',
-    'Owls': '🦉', 'Honey': '🍯', 'Pops': '🤘', 'ML': '🐻',
-    'Cobe': '⚾', 'Coin': '🪙', 'Abby': '⛸️', 'Jason': '🇪🇺'
-  };
-
-  function getAvatar(name, size = 32) {
-    const emoji = PLAYER_AVATARS[name] || '🏈';
-    return `<span style="display:inline-flex;align-items:center;justify-content:center;width:${size}px;height:${size}px;font-size:${size*0.65}px;background:rgba(245,197,24,0.1);border-radius:50%;border:2px solid rgba(245,197,24,0.3);margin-right:8px;">${emoji}</span>`;
-  }
-
-</script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+  <script src="firebase-config.js"></script>
 </head>
 <body>
 
@@ -523,13 +484,37 @@
   </div>
 </div>
 
+<!-- ── Weekly leaderboard ─────────────────────────── -->
+<div class="standings-section" id="weeklyLeaderboardSection" style="display:none;">
+  <div class="section-header">
+    <h2 class="section-title">Weekly Leaderboard</h2>
+    <select id="weekPickerSelect" class="refresh-btn" style="padding-right:8px;" onchange="renderWeeklyLeaderboard()"></select>
+  </div>
+
+  <div class="standings-table-wrap">
+    <table class="standings-table">
+      <thead>
+        <tr>
+          <th class="rank-col">#</th>
+          <th>Player</th>
+          <th style="text-align:center;">Picks</th>
+          <th class="total-col">Points</th>
+        </tr>
+      </thead>
+      <tbody id="weeklyLeaderboardBody">
+        <!-- Populated by JS -->
+      </tbody>
+    </table>
+  </div>
+</div>
+
 <!-- ── Full standings ─────────────────────────────── -->
 <div class="standings-section">
   <div class="section-header">
     <h2 class="section-title">Season Standings</h2>
     <button class="refresh-btn" onclick="loadStandings()">🔄 Refresh</button>
   </div>
-  
+
   <div class="standings-table-wrap">
     <table class="standings-table">
       <thead id="standingsTableHead">
@@ -567,18 +552,22 @@
     if (typeof DLC_DB !== 'undefined') {
       DLC_DB.onGamesChange((newGames) => {
         games = newGames;
+        const scoredGames = games.filter(g => g.homeScore !== null && g.finalSpread !== null);
+        weeks = [...new Set(scoredGames.map(g => g.week))].sort((a,b) => a - b);
         calculateStandings();
         renderStats();
         renderPodium();
         renderStandingsTable();
+        renderWeeklyLeaderboard();
       });
-      
+
       DLC_DB.onAllPicksChange((newPicks) => {
         playerData = newPicks;
         calculateStandings();
         renderStats();
         renderPodium();
         renderStandingsTable();
+        renderWeeklyLeaderboard();
       });
     }
   });
@@ -643,12 +632,21 @@
     renderStats();
     renderPodium();
     renderStandingsTable();
+    renderWeeklyLeaderboard();
   }
 
   function calculateStandings() {
     const scoredGames = games.filter(g => g.homeScore !== null && g.finalSpread !== null);
-    
-    const standings = Object.entries(playerData).map(([player, picks]) => {
+
+    // Roster comes from the known player list (PLAYER_AVATARS), unioned
+    // with anyone found in playerData - this way every real player shows
+    // up on the leaderboard even before they've submitted a single pick
+    // (0 points, all dashes) instead of only appearing once they have a
+    // picks record in Firebase.
+    const roster = new Set([...Object.keys(PLAYER_AVATARS), ...Object.keys(playerData)]);
+
+    const standings = [...roster].map(player => {
+      const picks = playerData[player] || {};
       const weeklyScores = {};
       let totalPoints = 0;
 
@@ -668,10 +666,70 @@
 
       return { player, weeklyScores, totalPoints };
     })
-    .filter(s => s.totalPoints > 0)
-    .sort((a, b) => b.totalPoints - a.totalPoints);
+    // Keep everyone, including 0-point players — sort by total points,
+    // then alphabetically so ties (including everyone-at-zero) land in a
+    // stable, predictable order instead of whatever order Firebase or the
+    // roster happened to return them in.
+    .sort((a, b) => b.totalPoints - a.totalPoints || a.player.localeCompare(b.player));
 
     return standings;
+  }
+
+  // Ranks every roster player by a single week's points, separate from the
+  // season-total table below it — "weekly scores, then season scores".
+  // Defaults to the most recent scored week; the dropdown lets you look
+  // back at any earlier week without losing your place on a live update
+  // (the select's options are only rebuilt when the set of weeks changes).
+  function renderWeeklyLeaderboard() {
+    const section = document.getElementById('weeklyLeaderboardSection');
+    const select = document.getElementById('weekPickerSelect');
+    const tbody = document.getElementById('weeklyLeaderboardBody');
+
+    if (weeks.length === 0) {
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = 'block';
+
+    const existingOptions = [...select.options].map(o => o.value);
+    const wantedOptions = weeks.map(String);
+    if (existingOptions.join(',') !== wantedOptions.join(',')) {
+      const previousValue = select.value;
+      select.innerHTML = weeks.map(w => `<option value="${w}">Week ${w}</option>`).join('');
+      select.value = wantedOptions.includes(previousValue) ? previousValue : String(weeks[weeks.length - 1]);
+    }
+
+    const selectedWeek = parseInt(select.value, 10);
+    const scoredGames = games.filter(g =>
+      g.homeScore !== null && g.finalSpread !== null && g.week === selectedWeek
+    );
+    const roster = new Set([...Object.keys(PLAYER_AVATARS), ...Object.keys(playerData)]);
+
+    const weekStandings = [...roster].map(player => {
+      const picks = playerData[player] || {};
+      let points = 0, pickCount = 0;
+
+      Object.entries(picks).forEach(([gameId, pick]) => {
+        const game = scoredGames.find(g => g.id === gameId);
+        if (!game) return;
+        pickCount++;
+        points += scorePickResult(game.homeScore, game.awayScore, game.finalSpread, pick.side).points;
+      });
+
+      return { player, points, pickCount };
+    })
+    .sort((a, b) => b.points - a.points || a.player.localeCompare(b.player));
+
+    tbody.innerHTML = weekStandings.map((s, idx) => {
+      const rank = idx + 1;
+      return `
+        <tr>
+          <td class="rank-cell rank-${rank}">${rank}</td>
+          <td class="player-cell">${getAvatar(s.player, 28)} ${s.player}</td>
+          <td style="text-align:center;color:var(--muted);font-size:13px;">${s.pickCount > 0 ? s.pickCount : '—'}</td>
+          <td class="total-cell">${s.points}</td>
+        </tr>`;
+    }).join('');
   }
 
   function scorePickResult(homeScore, awayScore, lockedSpread, pickedSide) {
@@ -724,14 +782,20 @@
     const standings = calculateStandings();
     const podium = document.getElementById('podium');
 
-    if (standings.length === 0) {
+    // The podium celebrates top scorers, so only players who've actually
+    // earned points belong on it. standings itself is never empty anymore
+    // (every roster player shows up at 0 pre-season/before they've picked),
+    // so without this a 0-point player could get crowned bronze just for
+    // being third alphabetically.
+    const contenders = standings.filter(s => s.totalPoints > 0);
+    if (contenders.length === 0) {
       document.getElementById('podiumContainer').style.display = 'none';
       return;
     }
 
     document.getElementById('podiumContainer').style.display = 'block';
 
-    const top3 = standings.slice(0, 3);
+    const top3 = contenders.slice(0, 3);
     const medals = ['🥇', '🥈', '🥉'];
     const classes = ['first', 'second', 'third'];
 
@@ -756,6 +820,9 @@
     const thead = document.getElementById('standingsTableHead');
     const tbody = document.getElementById('standingsTableBody');
 
+    // standings is never actually empty now (every roster player shows up
+    // even with 0 picks/points) — this only fires if the roster itself is
+    // somehow empty, which shouldn't happen in practice.
     if (standings.length === 0) {
       tbody.innerHTML = `
         <tr>
