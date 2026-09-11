@@ -1,5 +1,8 @@
 {
   "rewrites": [
     { "source": "/", "destination": "/dlc-picks-firebase-FINAL.html" }
+  ],
+  "crons": [
+    { "path": "/api/auto-score", "schedule": "*/15 * * * *" }
   ]
 }
