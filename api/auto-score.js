@@ -1,12 +1,17 @@
 // api/auto-score.js
 // Vercel Cron target — the actual "score games automatically, no button
-// press" path. Runs once a day at 9 PM PST (vercel.json: "0 5 * * *", i.e.
-// 05:00 UTC = 21:00 UTC-8) — note that's *standard* PST; during Pacific
-// Daylight Time (UTC-7, roughly mid-March to early November) this fires at
-// 10 PM on a Pacific wall clock instead of 9, since a plain cron schedule
-// has no daylight-saving awareness. Shift the "5" to a "4" during PDT
-// months if the commissioner wants the wall-clock time to stay exactly 9
-// PM year-round; left as literal PST since that's what was asked for.
+// press" path, meant to run once a day at 9 PM Pacific, year-round. Vercel
+// Cron schedules are plain fixed UTC times with no daylight-saving
+// awareness, so there's no single UTC cron expression that stays pinned to
+// "9 PM Pacific" across the DST change every March/November. Instead,
+// vercel.json fires this every hour on the hour ("0 * * * *"), and the
+// very first thing this does is check the actual current hour in
+// America/Los_Angeles (via Intl, which *is* DST-aware) and no-op unless
+// it's the 21:00 hour — so it always actually runs at 9 PM on a Pacific
+// wall clock, all year, without anyone needing to hand-edit a UTC offset
+// twice a year. Hitting the function 23 extra times a day to no-op is
+// negligible - each miss is one clock check and an early return, no
+// Firebase or ESPN calls happen.
 //
 // Unlike every other write path in this app, this one runs unattended
 // with no human preview step: it reads the live games list straight from
@@ -41,6 +46,17 @@ module.exports = async (req, res) => {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
+  }
+
+  // Only actually run during the 9 PM hour on a Pacific wall clock -
+  // DST-aware, unlike the cron schedule that triggers this every hour.
+  // ?force=1 bypasses this for manual testing from a browser/curl.
+  const pacificHour = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false
+  }).format(new Date());
+  if (pacificHour !== '21' && req.query?.force !== '1') {
+    res.status(200).json({ message: `Not the scheduled hour (it's ${pacificHour}:00 Pacific, waiting for 21:00).`, skipped: true });
+    return;
   }
 
   try {
