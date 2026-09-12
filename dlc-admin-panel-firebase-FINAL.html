@@ -901,19 +901,20 @@ Cleveland Browns at Cincinnati Bengals (-7.5, 44.5)
     <div style="background:#f0f4ff;border-left:4px solid #667eea;border-radius:8px;padding:20px;margin-bottom:24px;">
       <h3 style="margin-bottom:6px;">How scoring works</h3>
       <p style="color:#444;font-size:14px;line-height:1.8;">
-        Click <strong>🔄 Sync Final Scores from ESPN</strong> to auto-fill scores (and
+        Click <strong>✅ Score Games That Are Over</strong> to auto-fill scores (and
         auto-lock any game that isn't locked yet) for every loaded game ESPN reports as
-        final — click it again any time to pick up newly-finished games. Games ESPN
-        doesn't have a clean match for still need a score typed in by hand below.
-        Every player's points are calculated automatically from the
-        <strong>locked spread</strong> (set at kickoff) the moment a score is entered,
-        by hand or by sync — there's no separate "calculate" step.<br>
+        final — click it again any time to pick up newly-finished games. A daily job
+        also runs this automatically at 9 PM Pacific, so this button is mainly for
+        checking sooner. Games ESPN doesn't have a clean match for still need a score
+        typed in by hand below. Every player's points are calculated automatically from
+        the <strong>locked spread</strong> (set at kickoff) the moment a score is
+        entered, by hand or automatically — there's no separate "calculate" step.<br>
         ✅ Cover = <strong>2 pts</strong> &nbsp;·&nbsp; 🤝 Push = <strong>1 pt</strong> &nbsp;·&nbsp; ❌ No cover = <strong>0 pts</strong>
       </p>
     </div>
 
     <div class="controls" style="margin-bottom:16px;">
-      <button class="btn btn-primary" onclick="syncFinalScoresFromESPN()">🔄 Sync Final Scores from ESPN</button>
+      <button class="btn btn-primary" onclick="syncFinalScoresFromESPN()">✅ Score Games That Are Over</button>
       <button class="btn btn-secondary" onclick="scoreAllGames()">⚡ Calculate All Scores</button>
       <button class="btn btn-secondary" onclick="exportScores()">📥 Export Scores (CSV)</button>
       <div style="margin-left:auto;font-size:13px;color:#666;">
@@ -2165,8 +2166,11 @@ Cleveland Browns at Cincinnati Bengals (-7.5, 44.5)
         return;
       }
 
-      // Calculate results per player
-      const results = Object.entries(playerData).map(([player, picks]) => {
+      // Calculate results per player - restricted to the known roster so
+      // stray/test names that might exist as keys in Firebase (leftover
+      // from testing, never real players) can't show up here either.
+      const roster = typeof PLAYER_EMAILS !== 'undefined' ? Object.keys(PLAYER_EMAILS) : Object.keys(playerData);
+      const results = Object.entries(playerData).filter(([player]) => roster.includes(player)).map(([player, picks]) => {
         let wins = 0, pushes = 0, losses = 0, totalPoints = 0, pickCount = 0;
 
         Object.entries(picks).forEach(([gameId, pick]) => {
@@ -2208,96 +2212,54 @@ Cleveland Browns at Cincinnati Bengals (-7.5, 44.5)
       `).join('');
     }
 
-    // Closest thing to "score picks automatically when games end" that's
-    // buildable without a server-side cron job writing to Firebase on its
-    // own schedule (that needs a Firebase Admin service-account credential
-    // in Vercel's env, which isn't something this can provision) - this is
-    // a one-click sweep instead of a background job, but it does the same
-    // work: once clicked, every game ESPN reports as final gets its score
-    // (and, if it wasn't already locked, its lock) filled in, and every
-    // player's points for that game are already computed live from that
-    // the moment it's saved (calculateStandings() on the leaderboard reads
-    // homeScore/finalSpread directly - there's no separate manual scoring
-    // step once the score is in).
+    // One-click "score games that are over" — calls the same
+    // /api/auto-score endpoint the daily 9 PM Pacific cron job uses (see
+    // ESPN-API-NOTES.md), with ?force=1 to skip its "only during the 9 PM
+    // hour" gate so it runs immediately on click. That endpoint reads the
+    // live games straight from Firebase, checks ESPN for anything that's
+    // gone final, and writes scores (locking the spread too, if a game
+    // wasn't locked yet) straight back to Firebase — same server code
+    // either way, so this button and the nightly cron can't disagree with
+    // each other. Every player's points are already computed live from
+    // homeScore/finalSpread once it's saved — there's no separate scoring
+    // step once this returns. Refreshes this page's own copy of games
+    // from Firebase afterward so the tables reflect what was just written.
     async function syncFinalScoresFromESPN() {
       const statusEl = document.getElementById('scoreSyncStatus');
-      if (typeof ESPN_API === 'undefined') {
-        statusEl.textContent = '⚠️ espn-api.js did not load — can\'t sync from ESPN.';
-        return;
-      }
+      statusEl.textContent = '⏳ Checking for finished games...';
 
-      const unfinished = games.filter(g => g.status !== 'final');
-      if (unfinished.length === 0) {
-        statusEl.textContent = 'ℹ️ Every loaded game is already marked final.';
-        return;
-      }
-
-      // Query a date range wide enough to cover every unfinished game's
-      // kickoff, padded a day each way for time zone slop.
-      const times = unfinished.map(g => new Date(g.gameTime).getTime()).filter(t => !isNaN(t));
-      const fmt = (d) => d.toISOString().slice(0, 10).replace(/-/g, '');
-      const from = new Date(Math.min(...times)); from.setDate(from.getDate() - 1);
-      const to = new Date(Math.max(...times)); to.setDate(to.getDate() + 1);
-      const dates = `${fmt(from)}-${fmt(to)}`;
-      const leagues = [...new Set(unfinished.map(g => g.league === 'NFL' ? 'nfl' : 'cfb'))];
-
-      statusEl.textContent = '⏳ Checking ESPN for final scores...';
-      let espnGames;
+      let data;
       try {
-        espnGames = await ESPN_API.fetchWeekGames({ dates, leagues });
-      } catch (e) {
-        console.error('ESPN sync fetch failed:', e);
-        statusEl.textContent = `❌ ESPN fetch failed: ${e.message}`;
-        return;
-      }
-
-      let scored = 0, locked = 0, skippedNoSpread = 0;
-      for (const game of unfinished) {
-        // ESPN-imported games carry the event id they came from - an exact
-        // match. Yahoo-pasted or manually-added games don't have one, so
-        // fall back to matching on league + both team abbreviations.
-        const match = espnGames.find(e =>
-          (game.espnEventId && e.espnEventId === game.espnEventId) ||
-          (!game.espnEventId && e.league === game.league &&
-           e.homeAbbr === game.homeAbbr && e.awayAbbr === game.awayAbbr)
-        );
-        if (!match || match.status !== 'final') continue;
-        if (match.homeScore === null || match.awayScore === null) continue;
-
-        if (game.finalSpread === null) {
-          // Can't score a cover without a locked spread, and can't lock a
-          // spread that was never set (a "No Available Spread" PK game) -
-          // leave those for the admin to review by hand.
-          if (game.currentSpread === null || Number.isNaN(game.currentSpread)) {
-            skippedNoSpread++;
-            continue;
-          }
-          game.finalSpread = game.currentSpread;
-          locked++;
+        const res = await fetch('/api/auto-score?force=1');
+        data = await res.json();
+        if (!res.ok) {
+          statusEl.textContent = `❌ ${data.error || `Request failed (${res.status})`}`;
+          return;
         }
-
-        game.homeScore = match.homeScore;
-        game.awayScore = match.awayScore;
-        game.status = 'final';
-        scored++;
-      }
-
-      if (scored === 0) {
-        statusEl.textContent = skippedNoSpread > 0
-          ? `ℹ️ No new final scores matched yet (${skippedNoSpread} finished game(s) skipped — no spread was ever set to score them against).`
-          : 'ℹ️ No new final scores from ESPN yet — check back later.';
+      } catch (e) {
+        console.error('Score sync failed:', e);
+        statusEl.textContent = `❌ Couldn't reach the scoring endpoint: ${e.message}`;
         return;
       }
 
-      saveGames();
+      if (!data.scored) {
+        statusEl.textContent = data.message || 'ℹ️ No new final scores yet — check back later.';
+        return;
+      }
+
+      try {
+        games = await DLC_DB.loadGames();
+      } catch (e) {
+        console.warn('Could not refresh games after scoring:', e);
+      }
       updateStats();
       renderGamesTable();
       renderSpreadsTable();
       renderScoresTab();
 
-      statusEl.textContent = `✅ Synced ${scored} final score${scored !== 1 ? 's' : ''}` +
-        (locked > 0 ? ` (auto-locked ${locked})` : '') +
-        (skippedNoSpread > 0 ? ` — ${skippedNoSpread} finished game(s) skipped, no spread was ever set` : '') + '.';
+      statusEl.textContent = `✅ Scored ${data.scored} finished game${data.scored !== 1 ? 's' : ''}` +
+        (data.locked > 0 ? ` (auto-locked ${data.locked})` : '') +
+        (data.skippedNoSpread > 0 ? ` — ${data.skippedNoSpread} skipped, no spread was ever set` : '') + '.';
     }
 
     function scoreAllGames() {

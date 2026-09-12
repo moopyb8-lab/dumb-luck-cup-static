@@ -638,12 +638,15 @@
   function calculateStandings() {
     const scoredGames = games.filter(g => g.homeScore !== null && g.finalSpread !== null);
 
-    // Roster comes from the known player list (PLAYER_AVATARS), unioned
-    // with anyone found in playerData - this way every real player shows
-    // up on the leaderboard even before they've submitted a single pick
-    // (0 points, all dashes) instead of only appearing once they have a
-    // picks record in Firebase.
-    const roster = new Set([...Object.keys(PLAYER_AVATARS), ...Object.keys(playerData)]);
+    // Roster is strictly the known player list (PLAYER_AVATARS) - every
+    // real player shows up even before they've submitted a single pick
+    // (0 points, all dashes), but this deliberately does NOT also pull in
+    // whatever names happen to exist as keys under playerData. That used
+    // to be unioned in too, on the theory that a new player might show up
+    // there before being added to PLAYER_AVATARS - but Firebase can carry
+    // stray/test entries under names nobody actually plays as, and those
+    // have no business appearing on the leaderboard just for existing.
+    const roster = new Set(Object.keys(PLAYER_AVATARS));
 
     const standings = [...roster].map(player => {
       const picks = playerData[player] || {};
@@ -703,7 +706,8 @@
     const scoredGames = games.filter(g =>
       g.homeScore !== null && g.finalSpread !== null && g.week === selectedWeek
     );
-    const roster = new Set([...Object.keys(PLAYER_AVATARS), ...Object.keys(playerData)]);
+    // Same fixed roster as calculateStandings() - no stray Firebase keys.
+    const roster = new Set(Object.keys(PLAYER_AVATARS));
 
     const weekStandings = [...roster].map(player => {
       const picks = playerData[player] || {};
