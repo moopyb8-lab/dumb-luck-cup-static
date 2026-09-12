@@ -1,15 +1,26 @@
 // api/auto-score.js
 // Vercel Cron target — the actual "score games automatically, no button
-// press" path (see vercel.json for the schedule). Unlike every other write
-// path in this app, this one runs unattended with no human preview step:
-// it reads the live games list straight from Firebase, checks ESPN for any
-// that have gone final since the last run, and writes scores (and locks,
-// for any game that wasn't locked yet) straight back to Firebase. Mirrors
-// syncFinalScoresFromESPN() in the admin panel exactly — same matching,
-// same auto-lock rule, same "skip a finished game that never got a spread"
-// rule — that button still exists for on-demand use and to catch anything
-// a run of this misses (e.g. two games swapped home/away abbreviations by
-// coincidence, or the cron simply hasn't fired yet).
+// press" path. Runs once a day at 9 PM PST (vercel.json: "0 5 * * *", i.e.
+// 05:00 UTC = 21:00 UTC-8) — note that's *standard* PST; during Pacific
+// Daylight Time (UTC-7, roughly mid-March to early November) this fires at
+// 10 PM on a Pacific wall clock instead of 9, since a plain cron schedule
+// has no daylight-saving awareness. Shift the "5" to a "4" during PDT
+// months if the commissioner wants the wall-clock time to stay exactly 9
+// PM year-round; left as literal PST since that's what was asked for.
+//
+// Unlike every other write path in this app, this one runs unattended
+// with no human preview step: it reads the live games list straight from
+// Firebase, checks ESPN for any that have gone final (only already-played
+// games are touched — anything still scheduled or in-progress is left
+// alone), and writes scores (and locks, for any game that wasn't locked
+// yet) straight back to Firebase. Every point is still computed against
+// the locked spread, same as everywhere else in this app — this just
+// supplies the homeScore/awayScore/finalSpread that calculation reads.
+// Mirrors syncFinalScoresFromESPN() in the admin panel exactly — same
+// matching, same auto-lock rule, same "skip a finished game that never
+// got a spread" rule — that button still exists for on-demand use between
+// daily runs, or to catch anything a run of this misses (e.g. two games
+// swapped home/away abbreviations by coincidence).
 //
 // This app has no Firebase Auth anywhere — the browser writes straight to
 // Firebase with nothing but the public API key, which only works because
